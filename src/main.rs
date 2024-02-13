@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::SystemTime;
 use std::{fs, path::PathBuf};
 
+use chrono::{DateTime, TimeZone, Utc};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use metrohash::MetroHash;
@@ -21,9 +22,6 @@ use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct FileInfo {
-    #[serde(default)]
-    read: bool,
-
     comment: Option<String>,
 
     #[serde(default)]
@@ -33,14 +31,33 @@ pub struct FileInfo {
     rest: HashMap<String, serde_yaml::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug)]
+pub struct EntryOrdering {
+    left_path: String,
+    right_path: String,
+    vote: i64,
+    at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HashChange {
+    hash: u64,
+    at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct File {
     path: PathBuf,
-    hash: String,
-    info: FileInfo,
+    info: Option<FileInfo>,
+    hash_changes: Vec<HashChange>,
+    _hash: u64,
+    score: i64,
+}
 
-    ordering: i64,
-    checked: i64,
+impl File {
+    pub fn last_hash(&self) -> Option<u64> {
+        self.hash_changes.last().map(|h| h.hash)
+    }
 }
 
 impl Display for File {
@@ -73,38 +90,21 @@ fn get_files() -> Vec<File> {
                 let mut lines = s.lines();
                 if let Some("---") = lines.next() {
                     let yaml: String = lines.take_while(|l| *l != "---").collect();
-                    serde_yaml::from_str(&yaml).unwrap()
+                    Some(serde_yaml::from_str(&yaml).unwrap())
                 } else {
-                    Default::default()
+                    None
                 }
             };
 
             Some(File {
                 path,
-                hash: format!("{:x}", hash),
                 info,
-                ordering: 0,
-                checked: 0,
+                hash_changes: vec![],
+                _hash: hash,
+                score: 0,
             })
         })
         .collect()
-}
-
-fn map_row(row: &Row) -> File {
-    let yaml: Option<String> = row.get_unwrap("info_yaml");
-    let info: FileInfo = yaml
-        .map(|yaml| serde_yaml::from_str(&yaml).unwrap())
-        .unwrap_or_default();
-
-    let path: String = row.get_unwrap("path");
-
-    File {
-        path: PathBuf::from(path),
-        hash: row.get_unwrap("hash"),
-        info,
-        ordering: row.get_unwrap("ordering"),
-        checked: row.get_unwrap("checked"),
-    }
 }
 
 enum Ordering {
@@ -113,18 +113,71 @@ enum Ordering {
     Checked,
 }
 fn get_db_files(conn: &mut Connection, ordering: Ordering) -> Vec<File> {
-    let query = match ordering {
-        Ordering::None => "SELECT * FROM entries",
-        Ordering::Ordering => "SELECT * FROM entries ORDER BY ordering DESC",
-        Ordering::Checked => "SELECT * FROM entries ORDER BY checked ASC",
-    };
+    let mut b = conn
+        .prepare("SELECT path FROM entries WHERE deleted = FALSE")
+        .unwrap();
+    let entries = b
+        .query_map(params![], |r: &Row<'_>| -> Result<String, _> { r.get(0) })
+        .unwrap();
 
-    conn.prepare(query)
-        .unwrap()
-        .query_map(params![], |r| Ok(map_row(r)))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect()
+    let mut hash_stmt = conn
+        .prepare("SELECT hash, at FROM hash_changes WHERE path = ?1 ORDER BY at ASC")
+        .unwrap();
+
+    let mut items: HashMap<String, File> = entries
+        .map(|entry| {
+            let path = entry.unwrap();
+
+            let hash_changes: Result<Vec<_>, _> = hash_stmt
+                .query_map(params![path], |r| {
+                    Ok(HashChange {
+                        hash: {
+                            let s: String = r.get(0)?;
+                            u64::from_str_radix(&s, 16).unwrap()
+                        },
+                        at: Utc.timestamp_opt(r.get(1)?, 0).unwrap(),
+                    })
+                })
+                .unwrap()
+                .collect();
+
+            (
+                path.clone(),
+                File {
+                    path: PathBuf::from(path),
+                    info: None,
+                    hash_changes: hash_changes.unwrap(),
+                    _hash: 0,
+                    score: 0,
+                },
+            )
+        })
+        .collect();
+
+    let mut c = conn
+        .prepare("SELECT left_path, right_path, vote, at FROM entry_ordering")
+        .unwrap();
+    let orderings = c
+        .query_map(params![], |r| {
+            Ok(EntryOrdering {
+                left_path: r.get(0)?,
+                right_path: r.get(1)?,
+                vote: r.get(2)?,
+                at: Utc.timestamp_opt(r.get(3)?, 0).unwrap(),
+            })
+        })
+        .unwrap();
+
+    for ordering in orderings {
+        let ordering = ordering.unwrap();
+
+        items.get_mut(&ordering.left_path).unwrap().score -= ordering.vote;
+        items.get_mut(&ordering.right_path).unwrap().score += ordering.vote;
+    }
+
+    let mut res: Vec<_> = items.into_iter().map(|p| p.1).collect();
+    res.sort_by_key(|i| i.score);
+    res
 }
 
 fn set_db_files(conn: &mut Connection) {
@@ -150,49 +203,71 @@ fn set_db_files(conn: &mut Connection) {
         .unwrap();
     }
 
-    for f in fs_files {
-        let ts = SystemTime::UNIX_EPOCH.elapsed().unwrap().as_secs();
-        let info_yaml = serde_yaml::to_string(&f.info).unwrap();
+    let mut exists_stmt = tx
+        .prepare("SELECT COUNT(*)>0 FROM entries WHERE path = ?1")
+        .unwrap();
+    let mut prev_hash_stmt = tx
+        .prepare("SELECT hash FROM hash_changes WHERE path = ?1 ORDER BY at DESC LIMIT 1")
+        .unwrap();
 
+    for f in fs_files {
+        let ts = Utc::now().timestamp();
         let path = path_str(&f.path);
 
-        tx.execute(
-            r#"
-            INSERT INTO entries
-                (path, hash, info_yaml, added_at, updated_at)
-            VALUES
-                (?1, ?2, ?3, ?4, ?4)
-            ON CONFLICT DO UPDATE SET
-                hash = ?2,
-                info_yaml = ?3,
-                updated_at = ?4
-        "#,
-            params![path, f.hash, info_yaml, ts],
-        )
-        .unwrap();
+        let exists = exists_stmt
+            .query_row(params![path], |r| Ok(r.get::<_, i64>(0)? == 1))
+            .unwrap();
+
+        if !exists {
+            tx.execute(
+                r#"
+                INSERT INTO entries
+                    (path, deleted)
+                VALUES
+                    (?1, ?2)
+                "#,
+                params![path, false],
+            )
+            .unwrap();
+        }
+
+        let prev_hash: Result<Vec<u64>, _> = prev_hash_stmt
+            .query_map(params![path], |r| {
+                let s: String = r.get(0)?;
+                Ok(u64::from_str_radix(&s, 16).unwrap())
+            })
+            .unwrap()
+            .collect();
+        let prev_hash = prev_hash.unwrap().into_iter().next();
+
+        let hash_same = prev_hash.is_some_and(|h| f._hash == h);
+        if !hash_same {
+            tx.execute(
+                r#"
+                INSERT INTO hash_changes
+                    (path, hash, at)
+                VALUES
+                    (?1, ?2, ?3)
+                "#,
+                params![path, format!("{:x}", f._hash), ts],
+            )
+            .unwrap();
+        }
     }
 
+    drop(exists_stmt);
+    drop(prev_hash_stmt);
     tx.commit().unwrap();
 }
 
 fn competition(conn: &mut Connection, winner: &Path, loser: &Path) {
     assert!(winner != loser);
 
-    let tx = conn.transaction().unwrap();
-
-    tx.execute(
-        "UPDATE entries SET ordering = ordering+1, checked = checked+1 WHERE path = ?1",
-        params![path_str(&winner)],
+    conn.execute(
+        "INSERT INTO entry_ordering VALUES (?1, ?2, ?3, ?4)",
+        params![path_str(loser), path_str(winner), 1, Utc::now().timestamp()],
     )
     .unwrap();
-
-    tx.execute(
-        "UPDATE entries SET ordering = ordering-1, checked = checked+1 WHERE path = ?1",
-        params![path_str(&loser)],
-    )
-    .unwrap();
-
-    tx.commit().unwrap();
 }
 
 fn take_n_random<T>(rng: &mut impl Rng, items: &mut Vec<T>, n: usize) -> Vec<T> {
@@ -211,19 +286,17 @@ fn take_n_random<T>(rng: &mut impl Rng, items: &mut Vec<T>, n: usize) -> Vec<T> 
 }
 
 fn main() {
-    let mut conn = Connection::open("./db.db").unwrap();
-    /*
-    let mut rng = thread_rng();
-
     for f in get_files() {
         println!("{:?}", f);
     }
 
+    let mut conn = Connection::open("./db.db").unwrap();
+
     set_db_files(&mut conn);
-    */
+
+    //let mut rng = thread_rng();
 
     let items = get_db_files(&mut conn, Ordering::Checked);
-    println!("{:?} {:?}", items[0], items[1]);
 
     let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
         .items(&items[0..2])
@@ -234,4 +307,21 @@ fn main() {
 
     let other = [1, 0][selection];
     competition(&mut conn, &items[selection].path, &items[other].path);
+
+    println!("{:?} {:?}", items[0], items[1]);
+
+    let items = get_db_files(&mut conn, Ordering::Checked);
+    for f in items {
+        println!("{:?}", f);
+    }
+
+    return;
+    /*
+
+    for f in get_files() {
+        println!("{:?}", f);
+    }
+
+    set_db_files(&mut conn);
+    */
 }
