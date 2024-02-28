@@ -96,6 +96,7 @@ impl Display for File {
     }
 }
 
+// REVIEW
 impl PartialEq for File {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
@@ -103,6 +104,7 @@ impl PartialEq for File {
 }
 impl Eq for File {}
 
+// REVIEW
 impl Hash for File {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.path.hash(state)
