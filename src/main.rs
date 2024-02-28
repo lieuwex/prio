@@ -25,6 +25,9 @@ use util::path_str;
 
 // TODO maak manier om files te moven en dat te volgen
 
+const PATH: &'static str = "/home/lieuwe/entries";
+const DB_PATH: &'static str = "/home/lieuwe/entries/.db.db";
+
 async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
     assert!(winner != loser);
 
@@ -215,9 +218,11 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
 }
 
 async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
-    let entries = WalkDir::new("entries").into_iter().filter_map(|entry| {
+    let entries = WalkDir::new(PATH).into_iter().filter_map(|entry| {
         let entry = entry.unwrap();
         if !entry.file_type().is_file() {
+            return None;
+        } else if entry.file_name().to_string_lossy().starts_with('.') {
             return None;
         }
 
@@ -231,7 +236,8 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
         let metadata = entry.metadata().unwrap();
         let modified: DateTime<Utc> = metadata.modified().unwrap().into();
 
-        let path = entry.path();
+        let full_path = entry.path().to_path_buf();
+        let path = full_path.strip_prefix(PATH).unwrap();
         let path_str = path.to_str().unwrap();
 
         let db_file = db_files.iter().find(|f| f.path == path);
@@ -265,7 +271,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
             }
         }
 
-        let bytes = fs::read(&path).await?;
+        let bytes = fs::read(&full_path).await?;
 
         match db_file {
             Some(f) if f.last_content().content == bytes => continue,
@@ -302,7 +308,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
 fn main() -> Result<()> {
     Builder::new_current_thread().build()?.block_on(async {
         //let mut rng = thread_rng();
-        let mut conn = SqliteConnection::connect("./db.db").await?;
+        let mut conn = SqliteConnection::connect(DB_PATH).await?;
 
         update_files(&mut conn).await?;
 
