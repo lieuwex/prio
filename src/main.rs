@@ -1,7 +1,7 @@
 mod util;
 
 use std::borrow::BorrowMut;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -26,15 +26,15 @@ use util::path_str;
 async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
     assert!(winner != loser);
 
-    let loser = path_str(loser);
     let winner = path_str(winner);
+    let loser = path_str(loser);
     let score = 1;
     let ts = Utc::now().timestamp();
 
     query!(
         "INSERT INTO entry_votes VALUES (?1, ?2, ?3, ?4)",
-        loser,
         winner,
+        loser,
         score,
         ts
     )
@@ -55,6 +55,22 @@ fn take_n_random<T>(rng: &mut impl Rng, items: &mut Vec<T>, n: usize) -> Vec<T> 
         res.push(items.remove(i));
     }
 
+    res
+}
+
+fn take_n_most_interesting(items: &mut VecDeque<File>, n: usize) -> Vec<File> {
+    items
+        .make_contiguous()
+        .sort_by_key(|f| f.rating.deviation as i64);
+
+    let mut res = Vec::with_capacity(n);
+    for _ in 0..n {
+        res.push(
+            items
+                .pop_back()
+                .expect("vec is empty, but more items are requested"),
+        );
+    }
     res
 }
 
@@ -97,7 +113,7 @@ impl Display for File {
             .content;
         let s = String::from_utf8(content.clone()).unwrap();
         let line = s.lines().nth(0).unwrap();
-        write!(f, "{} ({:?})", line, self.path)
+        write!(f, "{} ({})", line, path_str(&self.path))
     }
 }
 
@@ -283,13 +299,14 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
 
 fn main() -> Result<()> {
     Builder::new_current_thread().build()?.block_on(async {
-        let mut rng = thread_rng();
+        //let mut rng = thread_rng();
         let mut conn = SqliteConnection::connect("./db.db").await?;
 
         update_files(&mut conn).await?;
 
-        let mut items = get_db_files(&mut conn, false).await?;
-        let items = take_n_random(&mut rng, &mut items, 2);
+        let items = get_db_files(&mut conn, false).await?;
+        let mut items = VecDeque::from(items);
+        let items = take_n_most_interesting(&mut items, 2);
 
         let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
             .items(&items)
@@ -303,7 +320,10 @@ fn main() -> Result<()> {
 
         let items = get_db_files(&mut conn, false).await?;
         for item in items.into_iter().rev() {
-            println!("{} (score: {})", item, item.rating.rating);
+            println!(
+                "{} (score: {}, deviation: {})",
+                item, item.rating.rating, item.rating.deviation
+            );
         }
 
         Ok(())
