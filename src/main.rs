@@ -18,9 +18,6 @@ use tokio::runtime::Builder;
 use util::path_str;
 use walkdir::WalkDir;
 
-// TODO: warn when file is found which is marked as deleted in db. maybe you don't want to revive
-// it.
-
 async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
     assert!(winner != loser);
 
@@ -112,12 +109,11 @@ impl Hash for File {
     }
 }
 
-async fn get_db_files(conn: &mut SqliteConnection) -> Result<Vec<File>> {
+async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Result<Vec<File>> {
     let items = query!(
         r#"
             SELECT path, deleted
             FROM entries
-            WHERE deleted = 0
         "#
     )
     .map(|r| File {
@@ -157,9 +153,6 @@ async fn get_db_files(conn: &mut SqliteConnection) -> Result<Vec<File>> {
         r#"
             SELECT left_path, right_path, vote, at
             FROM entry_votes
-            WHERE
-                (SELECT COUNT(*) FROM entries WHERE path = left_path AND deleted = 0) > 0 AND
-                (SELECT COUNT(*) FROM entries WHERE path = right_path AND deleted = 0) > 0
         "#
     )
     .map(|r| Vote {
@@ -176,7 +169,11 @@ async fn get_db_files(conn: &mut SqliteConnection) -> Result<Vec<File>> {
         m.get_mut(&ordering.right_path).unwrap().score += ordering.vote;
     }
 
-    let mut res: Vec<_> = m.into_iter().map(|p| p.1).collect();
+    let mut res: Vec<_> = m
+        .into_iter()
+        .map(|p| p.1)
+        .filter(|f| !f.deleted || include_deleted)
+        .collect();
     res.sort_by_key(|i| i.score);
     Ok(res)
 }
@@ -191,8 +188,8 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
         Some(entry)
     });
 
-    let db_files = get_db_files(conn).await?;
-    let mut left: HashSet<&File> = db_files.iter().collect();
+    let db_files = get_db_files(conn, true).await?;
+    let mut left: HashSet<&File> = db_files.iter().filter(|f| !f.deleted).collect();
 
     for entry in entries {
         let metadata = entry.metadata().unwrap();
@@ -217,6 +214,10 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
                 )
                 .execute(conn.borrow_mut())
                 .await?;
+            }
+            Some(db_file) if db_file.deleted => {
+                // TODO: make this a warning
+                panic!("file already exists in database as deleted");
             }
             Some(db_file) => {
                 left.remove(&db_file);
@@ -269,7 +270,7 @@ fn main() -> Result<()> {
 
         update_files(&mut conn).await?;
 
-        let mut items = get_db_files(&mut conn).await?;
+        let mut items = get_db_files(&mut conn, false).await?;
         let items = take_n_random(&mut rng, &mut items, 2);
 
         let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
@@ -282,7 +283,7 @@ fn main() -> Result<()> {
         let other = [1, 0][selection];
         competition(&mut conn, &items[selection].path, &items[other].path).await?;
 
-        let items = get_db_files(&mut conn).await?;
+        let items = get_db_files(&mut conn, false).await?;
         for item in items.into_iter().rev() {
             println!("{} (score: {})", item, item.score);
         }
