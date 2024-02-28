@@ -116,8 +116,8 @@ impl Display for File {
             .last()
             .expect("file_contents can't be empty")
             .content;
-        let s = String::from_utf8(content.clone()).unwrap();
-        let line = s.lines().nth(0).unwrap();
+        let s = std::str::from_utf8(&content).unwrap();
+        let line = s.lines().nth(0).unwrap_or("");
         write!(f, "{} ({})", line, path_str(&self.path))
     }
 }
