@@ -14,6 +14,7 @@ use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use rand::{thread_rng, Rng};
 use sqlx::{query, Connection, SqliteConnection};
 use tokio::fs;
+use tokio::runtime::Builder;
 use util::path_str;
 use walkdir::WalkDir;
 
@@ -261,30 +262,31 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut rng = thread_rng();
-    let mut conn = SqliteConnection::connect("./db.db").await?;
+fn main() -> Result<()> {
+    Builder::new_current_thread().build()?.block_on(async {
+        let mut rng = thread_rng();
+        let mut conn = SqliteConnection::connect("./db.db").await?;
 
-    update_files(&mut conn).await?;
+        update_files(&mut conn).await?;
 
-    let mut items = get_db_files(&mut conn).await?;
-    let items = take_n_random(&mut rng, &mut items, 2);
+        let mut items = get_db_files(&mut conn).await?;
+        let items = take_n_random(&mut rng, &mut items, 2);
 
-    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
-        .items(&items)
-        .default(0)
-        .interact_on_opt(&Term::stderr())
-        .unwrap()
-        .unwrap();
+        let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .items(&items)
+            .default(0)
+            .interact_on_opt(&Term::stderr())
+            .unwrap()
+            .unwrap();
 
-    let other = [1, 0][selection];
-    competition(&mut conn, &items[selection].path, &items[other].path).await?;
+        let other = [1, 0][selection];
+        competition(&mut conn, &items[selection].path, &items[other].path).await?;
 
-    let items = get_db_files(&mut conn).await?;
-    for item in items.into_iter().rev() {
-        println!("{} (score: {})", item, item.score);
-    }
+        let items = get_db_files(&mut conn).await?;
+        for item in items.into_iter().rev() {
+            println!("{} (score: {})", item, item.score);
+        }
 
-    Ok(())
+        Ok(())
+    })
 }
