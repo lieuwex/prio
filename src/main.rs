@@ -23,6 +23,8 @@ use walkdir::WalkDir;
 
 use util::path_str;
 
+// TODO maak manier om files te moven en dat te volgen
+
 async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
     assert!(winner != loser);
 
