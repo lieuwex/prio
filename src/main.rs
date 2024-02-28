@@ -1,3 +1,4 @@
+mod sample;
 mod util;
 
 use std::borrow::BorrowMut;
@@ -11,7 +12,6 @@ use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
-use rand::{thread_rng, Rng};
 use skillratings::{
     glicko2::{glicko2, Glicko2Config, Glicko2Rating},
     Outcomes,
@@ -21,6 +21,7 @@ use tokio::fs;
 use tokio::runtime::Builder;
 use walkdir::WalkDir;
 
+use sample::take_n;
 use util::path_str;
 
 // TODO maak manier om files te moven en dat te volgen
@@ -46,37 +47,6 @@ async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -
     .execute(conn)
     .await?;
     Ok(())
-}
-
-fn take_n_random<T>(rng: &mut impl Rng, items: &mut Vec<T>, n: usize) -> Vec<T> {
-    let mut res = Vec::with_capacity(n);
-
-    for _ in 0..n {
-        if items.len() == 0 {
-            panic!("vec is empty, but more items are requested");
-        }
-
-        let i = rng.gen_range(0..items.len());
-        res.push(items.remove(i));
-    }
-
-    res
-}
-
-fn take_n_most_interesting(items: &mut VecDeque<File>, n: usize) -> Vec<File> {
-    items
-        .make_contiguous()
-        .sort_by_key(|f| f.rating.deviation as i64);
-
-    let mut res = Vec::with_capacity(n);
-    for _ in 0..n {
-        res.push(
-            items
-                .pop_back()
-                .expect("vec is empty, but more items are requested"),
-        );
-    }
-    res
 }
 
 #[derive(Debug, Clone)]
@@ -314,7 +284,7 @@ fn main() -> Result<()> {
 
         let items = get_db_files(&mut conn, false).await?;
         let mut items = VecDeque::from(items);
-        let items = take_n_most_interesting(&mut items, 2);
+        let items = take_n(&mut items, 2);
 
         let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
             .items(&items)
