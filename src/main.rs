@@ -330,7 +330,7 @@ fn main() -> Result<()> {
         for item in items.into_iter().rev() {
             println!(
                 "{} (score: {}, deviation: {})",
-                item, item.rating.rating, item.rating.deviation
+                item, item.rating.rating as i64, item.rating.deviation as i64
             );
         }
 
