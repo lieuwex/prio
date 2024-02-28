@@ -20,6 +20,9 @@ use serde::{Deserialize, Serialize};
 use util::path_str;
 use walkdir::WalkDir;
 
+// TODO: warn when file is found which is marked as deleted in db. maybe you don't want to revive
+// it.
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct FileInfo {
     comment: Option<String>,
@@ -107,12 +110,7 @@ fn get_files() -> Vec<File> {
         .collect()
 }
 
-enum Ordering {
-    None,
-    Ordering,
-    Checked,
-}
-fn get_db_files(conn: &mut Connection, ordering: Ordering) -> Vec<File> {
+fn get_db_files(conn: &mut Connection) -> Vec<File> {
     let mut b = conn
         .prepare("SELECT path FROM entries WHERE deleted = FALSE")
         .unwrap();
@@ -155,7 +153,7 @@ fn get_db_files(conn: &mut Connection, ordering: Ordering) -> Vec<File> {
         .collect();
 
     let mut c = conn
-        .prepare("SELECT left_path, right_path, vote, at FROM entry_ordering")
+        .prepare("SELECT left_path, right_path, vote, at FROM entry_votes")
         .unwrap();
     let orderings = c
         .query_map(params![], |r| {
@@ -264,7 +262,7 @@ fn competition(conn: &mut Connection, winner: &Path, loser: &Path) {
     assert!(winner != loser);
 
     conn.execute(
-        "INSERT INTO entry_ordering VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO entry_votes VALUES (?1, ?2, ?3, ?4)",
         params![path_str(loser), path_str(winner), 1, Utc::now().timestamp()],
     )
     .unwrap();
@@ -283,6 +281,48 @@ fn take_n_random<T>(rng: &mut impl Rng, items: &mut Vec<T>, n: usize) -> Vec<T> 
     }
 
     res
+}
+
+fn update_files(conn: &mut Connection) {
+    let mut get_db_file_stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                path,
+                deleted,
+                () AS updated_at
+            FROM entries
+            WHERE path = ?1
+        "#,
+        )
+        .unwrap();
+
+    let entries = WalkDir::new("entries").into_iter().filter_map(|entry| {
+        let entry = entry.unwrap();
+        if !entry.file_type().is_file() {
+            return None;
+        }
+
+        Some(entry)
+    });
+
+    for entry in entries {
+        let metadata = entry.metadata().unwrap();
+        let modified: DateTime<Utc> = metadata.modified().unwrap().into();
+
+        let path = entry.path();
+        let path_str = path.to_str().unwrap();
+
+        let db_file = {
+            let db_files: Result<Vec<_>, _> = get_db_file_stmt
+                .query_map(params![path_str], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+                })
+                .unwrap()
+                .collect();
+            db_files.unwrap().into_iter().next()
+        };
+    }
 }
 
 fn main() {

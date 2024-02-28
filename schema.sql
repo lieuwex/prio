@@ -7,17 +7,17 @@ CREATE TABLE entries (
 	--checked INTEGER NOT NULL DEFAULT 0,
 );
 
-CREATE TABLE hash_changes (
+CREATE TABLE file_contents (
 	path TEXT NOT NULL,
-	hash INTEGER NOT NULL,
+	content BLOB NOT NULL,
 
 	at INTEGER NOT NULL,
 
 	FOREIGN KEY (path) REFERENCES entries(path)
 );
-CREATE INDEX hash_changes_path_idx ON hash_changes(path);
+CREATE INDEX file_contents_idx ON file_contents(path);
 
-CREATE TABLE entry_ordering (
+CREATE TABLE entry_votes (
 	left_path TEXT NOT NULL,
 	right_path TEXT NOT NULL,
 	vote INTEGER NOT NULL,
@@ -27,5 +27,5 @@ CREATE TABLE entry_ordering (
 	FOREIGN KEY (left_path) REFERENCES entries(path),
 	FOREIGN KEY (right_path) REFERENCES entries(path)
 );
-CREATE INDEX entry_ordering_left_path_idx ON entry_ordering(left_path);
-CREATE INDEX entry_ordering_right_path_idx ON entry_ordering(right_path);
+CREATE INDEX entry_votes_left_path_idx ON entry_votes(left_path);
+CREATE INDEX entry_votes_right_path_idx ON entry_votes(right_path);
