@@ -12,11 +12,16 @@ use chrono::{DateTime, TimeZone, Utc};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use rand::{thread_rng, Rng};
+use skillratings::{
+    glicko2::{glicko2, Glicko2Config, Glicko2Rating},
+    Outcomes,
+};
 use sqlx::{query, Connection, SqliteConnection};
 use tokio::fs;
 use tokio::runtime::Builder;
-use util::path_str;
 use walkdir::WalkDir;
+
+use util::path_str;
 
 async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
     assert!(winner != loser);
@@ -72,7 +77,7 @@ pub struct File {
     path: PathBuf,
     deleted: bool,
     file_contents: Vec<FileContent>,
-    score: i64,
+    rating: Glicko2Rating,
 }
 
 impl File {
@@ -122,7 +127,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
         path: PathBuf::from(r.path),
         deleted: r.deleted,
         file_contents: vec![],
-        score: 0,
+        rating: Glicko2Rating::new(),
     })
     .fetch_all(conn.borrow_mut())
     .await?;
@@ -167,8 +172,19 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
     .await?;
 
     for ordering in orderings {
-        m.get_mut(&ordering.left_path).unwrap().score -= ordering.vote;
-        m.get_mut(&ordering.right_path).unwrap().score += ordering.vote;
+        let left = m.get(&ordering.left_path).unwrap().rating;
+        let right = m.get(&ordering.right_path).unwrap().rating;
+
+        let outcome = match ordering.vote {
+            0 => Outcomes::DRAW,
+            ..=-1 => Outcomes::LOSS,
+            1.. => Outcomes::WIN,
+        };
+
+        let (left, right) = glicko2(&left, &right, &outcome, &Glicko2Config::new());
+
+        m.get_mut(&ordering.left_path).unwrap().rating = left;
+        m.get_mut(&ordering.right_path).unwrap().rating = right;
     }
 
     let mut res: Vec<_> = m
@@ -176,7 +192,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
         .map(|p| p.1)
         .filter(|f| !f.deleted || include_deleted)
         .collect();
-    res.sort_by_key(|i| i.score);
+    res.sort_by_key(|i| i.rating.rating as i64);
     Ok(res)
 }
 
@@ -287,7 +303,7 @@ fn main() -> Result<()> {
 
         let items = get_db_files(&mut conn, false).await?;
         for item in items.into_iter().rev() {
-            println!("{} (score: {})", item, item.score);
+            println!("{} (score: {})", item, item.rating.rating);
         }
 
         Ok(())
