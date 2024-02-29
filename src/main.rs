@@ -24,7 +24,7 @@ use walkdir::WalkDir;
 use sample::take_n;
 use util::path_str;
 
-// TODO maak manier om files te moven en dat te volgen
+// TODO maak manier om files te moven en dat te volgen. dit moet in een transaction
 
 const PATH: &'static str = "/home/lieuwe/entries";
 const DB_PATH: &'static str = "/home/lieuwe/entries/.db.db";
@@ -51,7 +51,7 @@ async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -
 
 #[derive(Debug, Clone)]
 pub struct FileContent {
-    content: Vec<u8>,
+    content: Option<Vec<u8>>,
     at: DateTime<Utc>,
 }
 
@@ -66,7 +66,6 @@ pub struct Vote {
 #[derive(Debug, Clone)]
 pub struct File {
     path: PathBuf,
-    deleted: bool,
     file_contents: Vec<FileContent>,
     rating: Glicko2Rating,
 }
@@ -77,6 +76,10 @@ impl File {
             .last()
             .expect("file_contents can't be empty")
     }
+
+    fn is_deleted(&self) -> bool {
+        self.last_content().content.is_none()
+    }
 }
 
 impl Display for File {
@@ -86,9 +89,17 @@ impl Display for File {
             .last()
             .expect("file_contents can't be empty")
             .content;
-        let s = std::str::from_utf8(&content).unwrap();
-        let line = s.lines().nth(0).unwrap_or("");
-        write!(f, "{} ({})", line, path_str(&self.path))
+
+        match content {
+            Some(content) => {
+                let s = std::str::from_utf8(&content).unwrap();
+                let line = s.lines().nth(0).unwrap_or("");
+                write!(f, "{} ({})", line, path_str(&self.path))
+            }
+            None => {
+                write!(f, "{} (deleted)", path_str(&self.path))
+            }
+        }
     }
 }
 
@@ -110,13 +121,12 @@ impl Hash for File {
 async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Result<Vec<File>> {
     let items = query!(
         r#"
-            SELECT path, deleted
+            SELECT path
             FROM entries
         "#
     )
     .map(|r| File {
         path: PathBuf::from(r.path),
-        deleted: r.deleted,
         file_contents: vec![],
         rating: Glicko2Rating::new(),
     })
@@ -181,7 +191,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
     let mut res: Vec<_> = m
         .into_iter()
         .map(|p| p.1)
-        .filter(|f| !f.deleted || include_deleted)
+        .filter(|f| !f.is_deleted() || include_deleted)
         .collect();
     res.sort_by_key(|i| i.rating.rating as i64);
     Ok(res)
@@ -200,7 +210,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     });
 
     let db_files = get_db_files(conn, true).await?;
-    let mut left: HashSet<&File> = db_files.iter().filter(|f| !f.deleted).collect();
+    let mut left: HashSet<&File> = db_files.iter().filter(|f| !f.is_deleted()).collect();
 
     for entry in entries {
         let metadata = entry.metadata().unwrap();
@@ -217,17 +227,16 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
                 query!(
                     r#"
                     INSERT INTO entries
-                        (path, deleted)
+                        (path)
                     VALUES
-                        (?1, ?2)
+                        (?1)
                     "#,
                     path_str,
-                    false
                 )
                 .execute(conn.borrow_mut())
                 .await?;
             }
-            Some(db_file) if db_file.deleted => {
+            Some(db_file) if db_file.is_deleted() => {
                 // TODO: make this a warning
                 panic!("file already exists in database as deleted");
             }
@@ -244,7 +253,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
         let bytes = fs::read(&full_path).await?;
 
         match db_file {
-            Some(f) if f.last_content().content == bytes => continue,
+            Some(f) if f.last_content().content.as_ref() == Some(&bytes) => continue,
             None | Some(_) => {
                 let ts = Utc::now().timestamp();
 
@@ -267,9 +276,20 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
 
     for db_file in left {
         let path = path_str(&db_file.path);
-        query!("UPDATE entries SET deleted = 1 WHERE path = ?1", path)
-            .execute(conn.borrow_mut())
-            .await?;
+        let ts = Utc::now().timestamp();
+
+        query!(
+            r#"
+            INSERT INTO file_contents
+                (path, content, at)
+            VALUES
+                (?1, NULL, ?2)
+            "#,
+            path,
+            ts
+        )
+        .execute(conn.borrow_mut())
+        .await?;
     }
 
     Ok(())

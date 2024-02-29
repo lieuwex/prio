@@ -1,6 +1,6 @@
 CREATE TABLE entries (
-	path TEXT NOT NULL PRIMARY KEY,
-	deleted BOOLEAN NOT NULL
+	path TEXT NOT NULL PRIMARY KEY
+	--deleted BOOLEAN NOT NULL
 	--hash TEXT NOT NULL,
 	--info_yaml TEXT,
 	--ordering INTEGER NOT NULL DEFAULT 0,
@@ -9,7 +9,7 @@ CREATE TABLE entries (
 
 CREATE TABLE file_contents (
 	path TEXT NOT NULL,
-	content BLOB NOT NULL,
+	content BLOB, -- if NULL the entry was deleted from disk
 
 	at INTEGER NOT NULL,
 
