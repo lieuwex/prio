@@ -1,9 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use rand::prelude::*;
 
 use crate::File;
 
+/*
 pub fn take_n_random<T>(items: &mut VecDeque<T>, n: usize) -> Vec<T> {
     println!("take_n_random");
     let mut rng = thread_rng();
@@ -40,6 +41,7 @@ pub fn take_n_most_interesting(items: &mut VecDeque<File>, n: usize) -> Vec<File
 
 pub fn take_n(items: &mut VecDeque<File>, n: usize) -> Vec<File> {
     let mut rng = thread_rng();
+
     let option = [(0, 70), (1, 30)]
         .choose_weighted(&mut rng, |i| i.1)
         .unwrap()
@@ -49,4 +51,25 @@ pub fn take_n(items: &mut VecDeque<File>, n: usize) -> Vec<File> {
         1 => take_n_random(items, n),
         _ => unreachable!(),
     }
+}
+*/
+
+pub fn take_n(items: VecDeque<File>, n: usize) -> Vec<File> {
+    let mut rng = thread_rng();
+
+    // REVIEW: can we reduce collects?
+
+    let items_ref: Vec<_> = items.iter().enumerate().map(|(i, f)| (i, f)).collect();
+    let indices: HashSet<usize> = items_ref
+        .choose_multiple_weighted(&mut rng, n, |(_, f)| f.rating.deviation)
+        .unwrap()
+        .map(|i| i.0)
+        .collect();
+
+    items
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| indices.contains(i))
+        .map(|(_, f)| f)
+        .collect()
 }

@@ -283,8 +283,8 @@ fn main() -> Result<()> {
         update_files(&mut conn).await?;
 
         let items = get_db_files(&mut conn, false).await?;
-        let mut items = VecDeque::from(items);
-        let items = take_n(&mut items, 2);
+        let items = VecDeque::from(items);
+        let items = take_n(items, 2);
 
         let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
             .items(&items)
