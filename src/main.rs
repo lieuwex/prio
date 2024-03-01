@@ -25,6 +25,7 @@ use sample::take_n;
 use util::path_str;
 
 // TODO maak manier om files te moven en dat te volgen. dit moet in een transaction
+// TODO: maak manier om weight af te laten nemen van oudere tournaments
 
 const PATH: &'static str = "/home/lieuwe/entries";
 const DB_PATH: &'static str = "/home/lieuwe/entries/.db.db";
