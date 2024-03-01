@@ -255,7 +255,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
         match db_file {
             Some(f) if f.last_content().content.as_ref() == Some(&bytes) => continue,
             None | Some(_) => {
-                let ts = Utc::now().timestamp();
+                let ts = modified.timestamp();
 
                 query!(
                     r#"
@@ -276,7 +276,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
 
     for db_file in left {
         let path = path_str(&db_file.path);
-        let ts = Utc::now().timestamp();
+        let ts = Utc::now().timestamp(); // REVIEW: is there a way to get the time of deletion?
 
         query!(
             r#"
