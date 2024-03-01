@@ -332,10 +332,13 @@ async fn vote(conn: &mut SqliteConnection) -> Result<()> {
 
 async fn show(conn: &mut SqliteConnection) -> Result<()> {
     let items = get_db_files(conn, false).await?;
-    for item in items.into_iter().rev() {
+    for (i, item) in items.into_iter().rev().enumerate() {
         println!(
-            "{} (score: {}, deviation: {})",
-            item, item.rating.rating as i64, item.rating.deviation as i64
+            "{}. {} (score: {}, deviation: {})",
+            i + 1,
+            item,
+            item.rating.rating as i64,
+            item.rating.deviation as i64
         );
     }
     Ok(())
