@@ -19,7 +19,7 @@ sqlx = { version = "0.7", features = [ "runtime-tokio", "sqlite", "chrono", "mac
 
 metrohash = "1"
 
-clap = "4.0.26"
+clap = { version = "4.5.1", features = ["derive"] }
 dialoguer = { version = "0.10", features = ["fuzzy-select"] }
 
 rand = "0.8.5"

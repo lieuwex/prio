@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
+use clap::{Parser, Subcommand};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use skillratings::{
@@ -296,14 +297,22 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
-    Builder::new_current_thread().build()?.block_on(async {
-        //let mut rng = thread_rng();
-        let mut conn = SqliteConnection::connect(DB_PATH).await?;
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
 
-        update_files(&mut conn).await?;
+#[derive(Subcommand, Debug, Clone)]
+enum Commands {
+    Vote,
+    Show,
+}
 
-        let items = get_db_files(&mut conn, false).await?;
+async fn vote(conn: &mut SqliteConnection) -> Result<()> {
+    loop {
+        let items = get_db_files(conn, false).await?;
         let items = VecDeque::from(items);
         let items = take_n(items, 2);
 
@@ -311,18 +320,40 @@ fn main() -> Result<()> {
             .items(&items)
             .default(0)
             .interact_on_opt(&Term::stderr())
-            .unwrap()
             .unwrap();
+        let Some(selection) = selection else { break };
 
         let other = [1, 0][selection];
-        competition(&mut conn, &items[selection].path, &items[other].path).await?;
+        competition(conn, &items[selection].path, &items[other].path).await?;
+    }
 
-        let items = get_db_files(&mut conn, false).await?;
-        for item in items.into_iter().rev() {
-            println!(
-                "{} (score: {}, deviation: {})",
-                item, item.rating.rating as i64, item.rating.deviation as i64
-            );
+    Ok(())
+}
+
+async fn show(conn: &mut SqliteConnection) -> Result<()> {
+    let items = get_db_files(conn, false).await?;
+    for item in items.into_iter().rev() {
+        println!(
+            "{} (score: {}, deviation: {})",
+            item, item.rating.rating as i64, item.rating.deviation as i64
+        );
+    }
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let command = cli.command.unwrap_or(Commands::Show);
+
+    Builder::new_current_thread().build()?.block_on(async {
+        //let mut rng = thread_rng();
+        let mut conn = SqliteConnection::connect(DB_PATH).await?;
+
+        update_files(&mut conn).await?;
+
+        match command {
+            Commands::Vote => vote(&mut conn).await?,
+            Commands::Show => show(&mut conn).await?,
         }
 
         Ok(())
