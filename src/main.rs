@@ -5,10 +5,9 @@ use std::borrow::BorrowMut;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
-use std::path::PathBuf;
 
 use anyhow::Result;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use dialoguer::console::Term;
@@ -23,7 +22,6 @@ use tokio::runtime::Builder;
 use walkdir::WalkDir;
 
 use sample::take_n;
-use util::path_str;
 
 // TODO maak manier om files te moven en dat te volgen. dit moet in een transaction
 // TODO: maak manier om weight af te laten nemen van oudere tournaments
@@ -31,11 +29,15 @@ use util::path_str;
 const PATH: &'static str = "/home/lieuwe/entries";
 const DB_PATH: &'static str = "/home/lieuwe/entries/.db.db";
 
-async fn competition(conn: &mut SqliteConnection, winner: &Path, loser: &Path) -> Result<()> {
+async fn competition(
+    conn: &mut SqliteConnection,
+    winner: &Utf8Path,
+    loser: &Utf8Path,
+) -> Result<()> {
     assert!(winner != loser);
 
-    let winner = path_str(winner);
-    let loser = path_str(loser);
+    let winner = winner.as_str();
+    let loser = loser.as_str();
     let score = 1;
     let ts = Utc::now().timestamp();
 
@@ -59,15 +61,15 @@ pub struct FileContent {
 
 #[derive(Debug, Clone)]
 pub struct Vote {
-    left_path: PathBuf,
-    right_path: PathBuf,
+    left_path: Utf8PathBuf,
+    right_path: Utf8PathBuf,
     vote: i64,
     at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
 pub struct File {
-    path: PathBuf,
+    path: Utf8PathBuf,
     file_contents: Vec<FileContent>,
     rating: Glicko2Rating,
 }
@@ -96,10 +98,10 @@ impl Display for File {
             Some(content) => {
                 let s = std::str::from_utf8(&content).unwrap();
                 let line = s.lines().nth(0).unwrap_or("");
-                write!(f, "{} ({})", line, path_str(&self.path))
+                write!(f, "{} ({})", line, self.path)
             }
             None => {
-                write!(f, "{} (deleted)", path_str(&self.path))
+                write!(f, "{} (deleted)", self.path)
             }
         }
     }
@@ -128,7 +130,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
         "#
     )
     .map(|r| File {
-        path: PathBuf::from(r.path),
+        path: Utf8PathBuf::from(r.path),
         file_contents: vec![],
         rating: Glicko2Rating::new(),
     })
@@ -137,7 +139,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
 
     let mut m = HashMap::with_capacity(items.len());
     for mut item in items {
-        let item_path = item.path.to_str().unwrap();
+        let item_path = item.path.as_str();
         let contents = query!(
             r#"
                 SELECT content, at
@@ -166,8 +168,8 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
         "#
     )
     .map(|r| Vote {
-        left_path: PathBuf::from(r.left_path),
-        right_path: PathBuf::from(r.right_path),
+        left_path: Utf8PathBuf::from(r.left_path),
+        right_path: Utf8PathBuf::from(r.right_path),
         vote: r.vote,
         at: Utc.timestamp(r.at, 0),
     })
@@ -218,9 +220,9 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
         let metadata = entry.metadata().unwrap();
         let modified: DateTime<Utc> = metadata.modified().unwrap().into();
 
-        let full_path = entry.path().to_path_buf();
+        let full_path = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()).unwrap();
         let path = full_path.strip_prefix(PATH).unwrap();
-        let path_str = path.to_str().unwrap();
+        let path_str = path.as_str();
 
         let db_file = db_files.iter().find(|f| f.path == path);
 
@@ -277,7 +279,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     }
 
     for db_file in left {
-        let path = path_str(&db_file.path);
+        let path = db_file.path.as_str();
         let ts = Utc::now().timestamp(); // REVIEW: is there a way to get the time of deletion?
 
         query!(
