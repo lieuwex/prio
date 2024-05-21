@@ -304,6 +304,7 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    number: Option<usize>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -332,15 +333,17 @@ async fn vote(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-async fn show(conn: &mut SqliteConnection) -> Result<()> {
+async fn show(conn: &mut SqliteConnection, number: Option<usize>) -> Result<()> {
     let items = get_db_files(conn, false).await?;
     for (i, item) in items.into_iter().rev().enumerate() {
+        let i = i + 1;
+        if number.is_some_and(|n| n != i) {
+            continue;
+        }
+
         println!(
             "{}. {} (score: {}, deviation: {})",
-            i + 1,
-            item,
-            item.rating.rating as i64,
-            item.rating.deviation as i64
+            i, item, item.rating.rating as i64, item.rating.deviation as i64
         );
     }
     Ok(())
@@ -349,6 +352,7 @@ async fn show(conn: &mut SqliteConnection) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Show);
+    let number = cli.number;
 
     Builder::new_current_thread().build()?.block_on(async {
         //let mut rng = thread_rng();
@@ -358,7 +362,7 @@ fn main() -> Result<()> {
 
         match command {
             Commands::Vote => vote(&mut conn).await?,
-            Commands::Show => show(&mut conn).await?,
+            Commands::Show => show(&mut conn, number).await?,
         }
 
         Ok(())
