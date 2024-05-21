@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, TimeZone, Utc};
 use clap::{Parser, Subcommand};
@@ -333,17 +333,41 @@ async fn vote(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-async fn show(conn: &mut SqliteConnection, number: Option<usize>) -> Result<()> {
+async fn show_one(conn: &mut SqliteConnection, number: usize) -> Result<()> {
+    let items = get_db_files(conn, false).await?;
+    let item = items
+        .into_iter()
+        .rev()
+        .enumerate()
+        .find(|(i, _)| *i == number - 1)
+        .ok_or_else(|| anyhow!("no item {} found", number))?
+        .1;
+
+    println!(
+        "{}. {} (score: {}, deviation: {})\n",
+        number, item, item.rating.rating as i64, item.rating.deviation as i64
+    );
+
+    for contents in item.file_contents {
+        let at = contents.at;
+        let contents = contents.content.as_ref().unwrap();
+        let contents = std::str::from_utf8(contents)?;
+
+        println!("@ {}\n{}", at, contents.trim());
+    }
+
+    Ok(())
+}
+
+async fn show(conn: &mut SqliteConnection) -> Result<()> {
     let items = get_db_files(conn, false).await?;
     for (i, item) in items.into_iter().rev().enumerate() {
-        let i = i + 1;
-        if number.is_some_and(|n| n != i) {
-            continue;
-        }
-
         println!(
             "{}. {} (score: {}, deviation: {})",
-            i, item, item.rating.rating as i64, item.rating.deviation as i64
+            i + 1,
+            item,
+            item.rating.rating as i64,
+            item.rating.deviation as i64
         );
     }
     Ok(())
@@ -362,7 +386,8 @@ fn main() -> Result<()> {
 
         match command {
             Commands::Vote => vote(&mut conn).await?,
-            Commands::Show => show(&mut conn, number).await?,
+            Commands::Show if number.is_some() => show_one(&mut conn, number.unwrap()).await?,
+            Commands::Show => show(&mut conn).await?,
         }
 
         Ok(())
