@@ -246,9 +246,9 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
                 left.remove(&db_file);
 
                 let outdated = modified > db_file.last_content().at;
-                if !outdated {
-                    continue;
-                }
+                //if !outdated {
+                //    continue;
+                //}
             }
         }
 
