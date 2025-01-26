@@ -359,7 +359,7 @@ async fn show_one(conn: &mut SqliteConnection, number: usize) -> Result<()> {
 
 async fn show(conn: &mut SqliteConnection) -> Result<()> {
     let items = get_db_files(conn, false).await?;
-    for (i, item) in items.into_iter().rev().enumerate() {
+    for (i, item) in items.into_iter().rev().enumerate().rev() {
         println!(
             "{}. {} (score: {}, deviation: {})",
             i + 1,
