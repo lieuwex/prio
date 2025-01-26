@@ -197,7 +197,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
         .map(|p| p.1)
         .filter(|f| !f.is_deleted() || include_deleted)
         .collect();
-    res.sort_by_key(|i| i.rating.rating as i64);
+    res.sort_by_key(|i| (i.rating.rating as i64, i.path.to_string()));
     Ok(res)
 }
 
