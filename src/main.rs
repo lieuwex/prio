@@ -26,8 +26,8 @@ use sample::take_n;
 // TODO maak manier om files te moven en dat te volgen. dit moet in een transaction
 // TODO: maak manier om weight af te laten nemen van oudere tournaments
 
-const PATH: &'static str = "/home/lieuwe/entries";
-const DB_PATH: &'static str = "/home/lieuwe/entries/.db.db";
+const PATH: &str = "/home/lieuwe/entries";
+const DB_PATH: &str = "/home/lieuwe/entries/.db.db";
 
 async fn competition(
     conn: &mut SqliteConnection,
@@ -96,7 +96,7 @@ impl Display for File {
 
         match content {
             Some(content) => {
-                let s = std::str::from_utf8(&content).unwrap();
+                let s = std::str::from_utf8(content).unwrap();
                 let line = s.lines().nth(0).unwrap_or("");
                 write!(f, "{} ({})", line, self.path)
             }
@@ -204,9 +204,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
 async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     let entries = WalkDir::new(PATH).into_iter().filter_map(|entry| {
         let entry = entry.unwrap();
-        if !entry.file_type().is_file() {
-            return None;
-        } else if entry.file_name().to_string_lossy().starts_with('.') {
+        if !entry.file_type().is_file() | entry.file_name().to_string_lossy().starts_with('.') {
             return None;
         }
 

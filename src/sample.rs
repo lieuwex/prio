@@ -59,7 +59,7 @@ pub fn take_n(items: VecDeque<File>, n: usize) -> Vec<File> {
 
     // REVIEW: can we reduce collects?
 
-    let items_ref: Vec<_> = items.iter().enumerate().map(|(i, f)| (i, f)).collect();
+    let items_ref: Vec<_> = items.iter().enumerate().collect();
     let indices: HashSet<usize> = items_ref
         .choose_multiple_weighted(&mut rng, n, |(_, f)| f.rating.deviation)
         .unwrap()
