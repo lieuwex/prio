@@ -346,7 +346,7 @@ async fn show_one(conn: &mut SqliteConnection, number: usize) -> Result<()> {
         number, item, item.rating.rating as i64, item.rating.deviation as i64
     );
 
-    for contents in item.file_contents {
+    if let Some(contents) = item.file_contents.last() {
         let at = contents.at;
         let contents = contents.content.as_ref().unwrap();
         let contents = std::str::from_utf8(contents)?;
