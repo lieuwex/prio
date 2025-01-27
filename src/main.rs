@@ -297,6 +297,18 @@ async fn update_files(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
+async fn get_file_with_index(conn: &mut SqliteConnection, number: usize) -> Result<File> {
+    let items = get_db_files(conn, false).await?;
+    let item = items
+        .into_iter()
+        .rev()
+        .enumerate()
+        .find(|(i, _)| *i == number - 1)
+        .ok_or_else(|| anyhow!("no item {} found", number))?
+        .1;
+    Ok(item)
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -309,6 +321,7 @@ struct Cli {
 enum Commands {
     Vote,
     Show,
+    Remove { number: usize },
 }
 
 async fn vote(conn: &mut SqliteConnection) -> Result<()> {
@@ -332,14 +345,7 @@ async fn vote(conn: &mut SqliteConnection) -> Result<()> {
 }
 
 async fn show_one(conn: &mut SqliteConnection, number: usize) -> Result<()> {
-    let items = get_db_files(conn, false).await?;
-    let item = items
-        .into_iter()
-        .rev()
-        .enumerate()
-        .find(|(i, _)| *i == number - 1)
-        .ok_or_else(|| anyhow!("no item {} found", number))?
-        .1;
+    let item = get_file_with_index(conn, number).await?;
 
     println!(
         "{}. {} (score: {}, deviation: {})\n",
@@ -371,6 +377,17 @@ async fn show(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
+async fn remove(conn: &mut SqliteConnection, number: usize) -> Result<()> {
+    let item = get_file_with_index(conn, number).await?;
+    let path = Utf8PathBuf::from(PATH).join(&item.path);
+
+    fs::remove_file(path).await?;
+    update_files(conn).await?;
+
+    println!("File {} ({}) removed", number, item);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Show);
@@ -386,6 +403,7 @@ fn main() -> Result<()> {
             Commands::Vote => vote(&mut conn).await?,
             Commands::Show if number.is_some() => show_one(&mut conn, number.unwrap()).await?,
             Commands::Show => show(&mut conn).await?,
+            Commands::Remove { number } => remove(&mut conn, number).await?,
         }
 
         Ok(())
