@@ -223,6 +223,9 @@ async fn update_files(conn: &mut SqliteConnection, delete_already_deleted: bool)
         let path_str = path.as_str();
 
         let db_file = db_files.iter().find(|f| f.path == path);
+        if let Some(db_file) = db_file {
+            left.remove(db_file);
+        }
 
         match db_file {
             None => {
@@ -247,10 +250,8 @@ async fn update_files(conn: &mut SqliteConnection, delete_already_deleted: bool)
                     panic!("file already exists in database as deleted");
                 }
             }
-            Some(db_file) => {
-                left.remove(&db_file);
-
-                let outdated = modified > db_file.last_content().at;
+            Some(_db_file) => {
+                //let outdated = modified > db_file.last_content().at;
                 //if !outdated {
                 //    continue;
                 //}
