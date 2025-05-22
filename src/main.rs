@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use anyhow::{anyhow, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, TimeZone, Utc};
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 use skillratings::{
@@ -201,7 +201,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
     Ok(res)
 }
 
-async fn update_files(conn: &mut SqliteConnection, delete_already_deleted: bool) -> Result<()> {
+async fn update_files(conn: &mut SqliteConnection, options: SyncOptions) -> Result<()> {
     let entries = WalkDir::new(PATH).into_iter().filter_map(|entry| {
         let entry = entry.unwrap();
         if !entry.file_type().is_file() || entry.file_name().to_string_lossy().starts_with('.') {
@@ -242,11 +242,12 @@ async fn update_files(conn: &mut SqliteConnection, delete_already_deleted: bool)
                 .await?;
             }
             Some(db_file) if db_file.is_deleted() => {
-                if delete_already_deleted {
+                if options.delete_already_deleted {
                     fs::remove_file(&full_path).await?;
                     continue;
+                } else if options.resurrect_deleted {
+                    eprintln!("resurrecting previously deleted file: {}", path);
                 } else {
-                    // TODO: make this a warning
                     panic!("file already exists in database as deleted");
                 }
             }
@@ -327,13 +328,16 @@ struct Cli {
 enum Commands {
     Vote,
     Show,
-    Remove {
-        number: usize,
-    },
-    Sync {
-        #[clap(short = 'd', long, action)]
-        delete_already_deleted: bool,
-    },
+    Remove { number: usize },
+    Sync(SyncOptions),
+}
+
+#[derive(Args, Debug, Clone, Default)]
+struct SyncOptions {
+    #[clap(short = 'd', long, action)]
+    delete_already_deleted: bool,
+    #[clap(short = 'r', long, action)]
+    resurrect_deleted: bool,
 }
 
 async fn vote(conn: &mut SqliteConnection) -> Result<()> {
@@ -394,7 +398,7 @@ async fn remove(conn: &mut SqliteConnection, number: usize) -> Result<()> {
     let path = Utf8PathBuf::from(PATH).join(&item.path);
 
     fs::remove_file(path).await?;
-    update_files(conn, false).await?;
+    update_files(conn, Default::default()).await?;
 
     println!("File {} ({}) removed", number, item);
     Ok(())
@@ -411,22 +415,20 @@ fn main() -> Result<()> {
 
         match command {
             Commands::Vote => {
-                update_files(&mut conn, false).await?;
+                update_files(&mut conn, Default::default()).await?;
                 vote(&mut conn).await?
             }
             Commands::Show if number.is_some() => {
-                update_files(&mut conn, false).await?;
+                update_files(&mut conn, Default::default()).await?;
                 show_one(&mut conn, number.unwrap()).await?
             }
             Commands::Show => {
-                update_files(&mut conn, false).await?;
+                update_files(&mut conn, Default::default()).await?;
                 show(&mut conn).await?
             }
 
             Commands::Remove { number } => remove(&mut conn, number).await?,
-            Commands::Sync {
-                delete_already_deleted,
-            } => update_files(&mut conn, delete_already_deleted).await?,
+            Commands::Sync(opt) => update_files(&mut conn, opt).await?,
         }
 
         Ok(())
