@@ -204,7 +204,7 @@ async fn get_db_files(conn: &mut SqliteConnection, include_deleted: bool) -> Res
 async fn update_files(conn: &mut SqliteConnection, delete_already_deleted: bool) -> Result<()> {
     let entries = WalkDir::new(PATH).into_iter().filter_map(|entry| {
         let entry = entry.unwrap();
-        if !entry.file_type().is_file() | entry.file_name().to_string_lossy().starts_with('.') {
+        if !entry.file_type().is_file() || entry.file_name().to_string_lossy().starts_with('.') {
             return None;
         }
 
